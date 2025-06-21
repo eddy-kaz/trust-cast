@@ -184,3 +184,87 @@
     })
   )
 )
+
+(define-read-only (calculate-content-quality (content-id uint))
+  (let (
+      (content-data (unwrap! (map-get? content content-id) u0))
+      (total-votes (get total-votes content-data))
+      (positive-votes (get positive-votes content-data))
+    )
+    (if (> total-votes u0)
+      (/ (* positive-votes u1000) total-votes) ;; Quality score out of 1000
+      u0
+    )
+  )
+)
+
+(define-read-only (calculate-trust-score (user principal))
+  (let (
+      (user-data (unwrap! (map-get? users user) u0))
+      (reputation (get reputation-score user-data))
+      (stake-amount (get stake-amount user-data))
+      (content-count (get total-content user-data))
+    )
+    (+ (/ reputation u10) ;; Reputation component (/ stake-amount u100000)
+      ;; Stake component (STX to points) (* content-count u5)
+      ;; Content activity component
+    )
+  )
+)
+
+;; Private functions
+
+(define-private (update-reputation
+    (user principal)
+    (score-change int)
+    (reason (string-ascii 50))
+  )
+  (let (
+      (current-user (default-to {
+        reputation-score: u0,
+        total-content: u0,
+        total-earnings: u0,
+        stake-amount: u0,
+        last-action-block: u0,
+        verified: false,
+        join-block: stacks-block-height,
+      }
+        (map-get? users user)
+      ))
+      (current-score (get reputation-score current-user))
+      (new-score (if (< score-change 0)
+        (if (>= current-score (to-uint (- 0 score-change)))
+          (- current-score (to-uint (- 0 score-change)))
+          u0
+        )
+        (+ current-score (to-uint score-change))
+      ))
+    )
+    (map-set users user
+      (merge current-user {
+        reputation-score: new-score,
+        last-action-block: stacks-block-height,
+      })
+    )
+    (map-set reputation-history {
+      user: user,
+      block: stacks-block-height,
+    } {
+      old-score: current-score,
+      new-score: new-score,
+      reason: reason,
+    })
+    (ok new-score)
+  )
+)
+
+(define-private (calculate-voting-weight (voter principal))
+  (let (
+      (user-data (unwrap! (map-get? users voter) u1))
+      (reputation (get reputation-score user-data))
+      (stake-amount (get stake-amount user-data))
+    )
+    (+ u1 (/ reputation u100) (/ stake-amount u1000000))
+  )
+  ;; Base weight + reputation + stake bonuses
+)
