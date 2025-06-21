@@ -268,3 +268,91 @@
   )
   ;; Base weight + reputation + stake bonuses
 )
+
+(define-private (distribute-content-rewards (content-id uint))
+  (let (
+      (content-data (unwrap! (map-get? content content-id) err-not-found))
+      (creator (get creator content-data))
+      (quality-score (get quality-score content-data))
+      (total-votes (get total-votes content-data))
+      (reward-amount (/ (* quality-score (var-get content-reward-pool)) u10000))
+    )
+    (if (and (> reward-amount u0) (not (get reward-claimed content-data)))
+      (begin
+        (unwrap! (as-contract (stx-transfer? reward-amount tx-sender creator))
+          err-insufficient-funds
+        )
+        (map-set content content-id (merge content-data { reward-claimed: true }))
+        (var-set content-reward-pool
+          (- (var-get content-reward-pool) reward-amount)
+        )
+        (unwrap!
+          (update-reputation creator (to-int (/ quality-score u10))
+            "content-reward"
+          )
+          err-owner-only
+        )
+        (ok reward-amount)
+      )
+      (ok u0)
+    )
+  )
+)
+
+;; Public functions
+
+(define-public (register-user)
+  (let ((existing-user (map-get? users tx-sender)))
+    (asserts! (is-none existing-user) err-already-exists)
+    (map-set users tx-sender {
+      reputation-score: u100, ;; Starting reputation
+      total-content: u0,
+      total-earnings: u0,
+      stake-amount: u0,
+      last-action-block: stacks-block-height,
+      verified: false,
+      join-block: stacks-block-height,
+    })
+    (ok true)
+  )
+)
+
+(define-public (stake-tokens (amount uint))
+  (let (
+      (user-data (unwrap! (map-get? users tx-sender) err-not-found))
+      (current-stake (get stake-amount user-data))
+    )
+    (asserts! (validate-amount amount) err-invalid-input)
+    (asserts! (>= amount (var-get min-stake-amount)) err-invalid-amount)
+    (try! (stx-transfer? amount tx-sender (as-contract tx-sender)))
+    (map-set users tx-sender
+      (merge user-data {
+        stake-amount: (+ current-stake amount),
+        last-action-block: stacks-block-height,
+      })
+    )
+    (unwrap!
+      (update-reputation tx-sender (to-int (/ amount u100000)) "stake-increase")
+      err-owner-only
+    )
+    (ok amount)
+  )
+)
+
+(define-public (unstake-tokens (amount uint))
+  (let (
+      (user-data (unwrap! (map-get? users tx-sender) err-not-found))
+      (current-stake (get stake-amount user-data))
+    )
+    (asserts! (validate-amount amount) err-invalid-input)
+    (asserts! (>= current-stake amount) err-insufficient-funds)
+    (try! (as-contract (stx-transfer? amount tx-sender tx-sender)))
+    (map-set users tx-sender
+      (merge user-data {
+        stake-amount: (- current-stake amount),
+        last-action-block: stacks-block-height,
+      })
+    )
+    (ok amount)
+  )
+)
